@@ -1,18 +1,14 @@
-
 /**
  * Drop‑in Note for Obsidian
  * ------------------------
- * One palette command that:
- * 1. Prompts the user for a name.
- * 2. Creates a folder with that name (unless it already exists).
- * 3. Creates a note of the same name inside that folder (unless it exists).
- * 4. Inserts a markdown link to the new note at the current cursor position.
- *
- * If the folder already exists the command simply shows a Notice and exits—
- * nothing is overwritten.  (Added in v1.1.0.)
+ * Palette command that:
+ *   • Prompts for a name.
+ *   • Creates an adjacent folder and note (unless they exist).
+ *   • Inserts a **relative** markdown link at the exact cursor position and
+ *     leaves the caret just after the link.
  *
  * @author  iyioon
- * @version 1.1.0  (24 Apr 2025)
+ * @version 1.0.0  (24 Apr 2025)
  */
 
 import {
@@ -24,6 +20,7 @@ import {
   PluginSettingTab,
   Setting,
   TFile,
+  Editor
 } from "obsidian";
 
 /* ------------------------------------------------------------------------- */
@@ -31,7 +28,7 @@ import {
 /* ------------------------------------------------------------------------- */
 
 export interface DropInNoteSettings {
-  /** Template text written into each new note (use `{{name}}` placeholder). */
+  /** Template text for new notes (`{{name}}` placeholder supported). */
   noteTemplate: string;
 }
 
@@ -43,8 +40,6 @@ const DEFAULT_SETTINGS: DropInNoteSettings = {
 
 export default class DropInNotePlugin extends Plugin {
   public settings!: DropInNoteSettings;
-
-  /* ----------------------------- lifecycle -------------------------------- */
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -58,54 +53,96 @@ export default class DropInNotePlugin extends Plugin {
     this.addSettingTab(new DropInNoteSettingTab(this.app, this));
   }
 
-  /* ------------------------------ command --------------------------------- */
+  /* ----------------------------------------------------------------------- */
+  /* Core command                                                            */
+  /* ----------------------------------------------------------------------- */
 
-  /**
-   * Prompt for a name, create folder + note, insert link, with guard against
-   * pre‑existing folders.
-   */
   private async createFolderNote(): Promise<void> {
-    const name = await this.promptForName();
-    if (!name) return;
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const editor = view?.editor;
+    if (!editor) {
+      new Notice("No active editor – open a note first.");
+      return;
+    }
 
-    const { vault, workspace } = this.app;
-    const folderPath = `${name}/`;
-    const notePath = `${folderPath}${name}.md`;
+    /* ---- 1. Save caret via placeholder token (bullet‑proof) ------------- */
+    const token = `%%dropin_${Date.now()}%%`;
+    editor.replaceSelection(token);
+
+    const name = await this.promptForName();
+    if (!name) {
+      this.removeToken(editor, token);
+      return;
+    }
+
+    /* ---- 2. File system operations ------------------------------------- */
+    const { vault, metadataCache } = this.app;
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!activeFile) {
+      new Notice("No active file – open a note first.");
+      this.removeToken(editor, token);
+      return;
+    }
+
+    const baseDir = activeFile.parent?.path ?? "";
+    const folderPath = baseDir ? `${baseDir}/${name}` : name;
+    const notePath = `${folderPath}/${name}.md`;
 
     try {
-      /* ---------- guard: folder already exists ---------- */
       if (vault.getAbstractFileByPath(folderPath)) {
         new Notice(`Folder \"${name}\" already exists – nothing created.`);
+        this.removeToken(editor, token);
         return;
       }
 
-      /* -------------- create folder & note -------------- */
       await vault.createFolder(folderPath);
       const noteFile = (await vault.create(
         notePath,
         this.settings.noteTemplate.replace(/\{\{name}}/g, name)
       )) as TFile;
 
-      /* ------------------ insert link ------------------- */
-      const editor = workspace.getActiveViewOfType(MarkdownView)?.editor;
-      if (editor) {
-        editor.replaceSelection(`[${name}](${noteFile.path})`);
+      /* ---- 3. Build relative markdown link ----------------------------- */
+      // metadataCache.fileToLinktext returns a *relative* path w/out ext
+      // Relative path without extension
+      const link = `[${name}](${name}/${name}.md)`;
+
+      /* ---- 4. Replace token & move caret ------------------------------- */
+      const doc = editor.getValue();
+      const idx = doc.indexOf(token);
+      if (idx === -1) {
+        // Fallback (shouldn’t happen)
+        editor.replaceSelection(link);
       } else {
-        new Notice("No active editor to insert the link into.");
+        const from = editor.offsetToPos(idx);
+        const to = editor.offsetToPos(idx + token.length);
+        editor.replaceRange(link, from, to);
+        editor.setCursor({ line: from.line, ch: from.ch + link.length });
       }
     } catch (err) {
       console.error("Drop‑in Note plugin error:", err);
       new Notice("Unable to create folder/note – see console for details.");
+      this.removeToken(editor, token);
     }
   }
 
-  /* ------------------------------ dialogs --------------------------------- */
+  /* ----------------------------------------------------------------------- */
+  /* Helpers                                                                 */
+  /* ----------------------------------------------------------------------- */
+
+  /** Remove leftover placeholder token if command aborts. */
+  private removeToken(editor: Editor, token: string) {
+    const doc = editor.getValue();
+    const idx = doc.indexOf(token);
+    if (idx !== -1) {
+      const from = editor.offsetToPos(idx);
+      const to = editor.offsetToPos(idx + token.length);
+      editor.replaceRange("", from, to);
+    }
+  }
 
   private promptForName(): Promise<string | undefined> {
     return new Promise((resolve) => new NamePromptModal(this.app, resolve).open());
   }
-
-  /* ----------------------------- settings --------------------------------- */
 
   private async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -122,20 +159,17 @@ export default class DropInNotePlugin extends Plugin {
 
 class NamePromptModal extends Modal {
   private inputEl!: HTMLInputElement;
-
   constructor(app: App, private onSubmit: (value?: string) => void) {
     super(app);
   }
 
   onOpen(): void {
     this.titleEl.setText("Folder / note name");
-
     this.inputEl = this.contentEl.createEl("input", {
       type: "text",
       placeholder: "e.g. Project X",
       cls: "din-input",
     });
-
     this.inputEl.focus();
     this.inputEl.addEventListener("keydown", (ev: KeyboardEvent) => {
       if (ev.key === "Enter") this.submit();
@@ -169,9 +203,7 @@ class DropInNoteSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("New note template")
-      .setDesc(
-        "Text that will be written to every new note. Use {{name}} where the note name should appear."
-      )
+      .setDesc("Text written to every new note. Use {{name}} for the title.")
       .addTextArea((ta) =>
         ta
           .setPlaceholder("# {{name}}")
@@ -183,4 +215,3 @@ class DropInNoteSettingTab extends PluginSettingTab {
       );
   }
 }
-
