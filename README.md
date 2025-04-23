@@ -23,11 +23,11 @@ To streamline this workflow, make sure your Obsidian settings for attachments ar
 ## Installation
 
 1. **Automatic (Community Plugins)**  
-   _Pending approval – search for “Folder Note Creator” once accepted._
+   _Pending approval – search for “Drop-in Note” once accepted._
 
 2. **Manual**
 
-- Download the latest `folder-note-creator.zip` from [Releases](../../releases).
+- Download the latest `drop-in-note.zip` from [Releases](../../releases).
 - Unzip so that `main.js`, `manifest.json`, and `styles.css` sit in  
   `.obsidian/plugins/drop-in-note/`.
 - Restart Obsidian and enable the plugin in **Settings → Community plugins**.
