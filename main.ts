@@ -1,14 +1,14 @@
 /**
- * Drop‑in Note for Obsidian
+ * Drop-in Note for Obsidian
  * ------------------------
  * Palette command that:
  *   • Prompts for a name.
  *   • Creates an adjacent folder and note (unless they exist).
- *   • Inserts a **relative** markdown link at the exact cursor position and
- *     leaves the caret just after the link.
+ *   • Inserts a **relative** markdown link
+ *     exactly at the cursor and leaves the caret just after the link.
  *
  * @author  iyioon
- * @version 1.0.0  (24 Apr 2025)
+ * @version 1.0.0 (24 Apr 2025)
  */
 
 import {
@@ -20,7 +20,7 @@ import {
   PluginSettingTab,
   Setting,
   TFile,
-  Editor
+  Editor,
 } from "obsidian";
 
 /* ------------------------------------------------------------------------- */
@@ -46,7 +46,7 @@ export default class DropInNotePlugin extends Plugin {
 
     this.addCommand({
       id: "dropin-create-folder-note-link",
-      name: "Drop‑in note: create & link",
+      name: "Drop-in note: create & link",
       callback: () => void this.createFolderNote(),
     });
 
@@ -65,7 +65,7 @@ export default class DropInNotePlugin extends Plugin {
       return;
     }
 
-    /* ---- 1. Save caret via placeholder token (bullet‑proof) ------------- */
+    /* ---- 1. Save caret via placeholder token (bullet-proof) ------------- */
     const token = `%%dropin_${Date.now()}%%`;
     editor.replaceSelection(token);
 
@@ -76,7 +76,7 @@ export default class DropInNotePlugin extends Plugin {
     }
 
     /* ---- 2. File system operations ------------------------------------- */
-    const { vault, metadataCache } = this.app;
+    const { vault } = this.app;
     const activeFile = this.app.workspace.getActiveFile();
     if (!activeFile) {
       new Notice("No active file – open a note first.");
@@ -101,16 +101,14 @@ export default class DropInNotePlugin extends Plugin {
         this.settings.noteTemplate.replace(/\{\{name}}/g, name)
       )) as TFile;
 
-      /* ---- 3. Build relative markdown link ----------------------------- */
-      // metadataCache.fileToLinktext returns a *relative* path w/out ext
-      // Relative path without extension
-      const link = `[${name}](${name}/${name}.md)`;
+      /* ---- 3. Build markdown link (encoded URL) ------------------------- */
+      const encoded = encodeURIComponent(name); // spaces → %20
+      const link = `[${name}](${encoded}/${encoded}.md)`;
 
       /* ---- 4. Replace token & move caret ------------------------------- */
       const doc = editor.getValue();
       const idx = doc.indexOf(token);
       if (idx === -1) {
-        // Fallback (shouldn’t happen)
         editor.replaceSelection(link);
       } else {
         const from = editor.offsetToPos(idx);
@@ -119,7 +117,7 @@ export default class DropInNotePlugin extends Plugin {
         editor.setCursor({ line: from.line, ch: from.ch + link.length });
       }
     } catch (err) {
-      console.error("Drop‑in Note plugin error:", err);
+      console.error("Drop-in Note plugin error:", err);
       new Notice("Unable to create folder/note – see console for details.");
       this.removeToken(editor, token);
     }
@@ -167,7 +165,7 @@ class NamePromptModal extends Modal {
     this.titleEl.setText("Folder / note name");
     this.inputEl = this.contentEl.createEl("input", {
       type: "text",
-      placeholder: "e.g. Project X",
+      placeholder: "e.g. Project X",
       cls: "din-input",
     });
     this.inputEl.focus();
