@@ -28,8 +28,8 @@ To streamline this workflow, make sure your Obsidian settings for attachments ar
 2. **Manual**
 
 - Download the latest `folder-note-creator.zip` from [Releases](../../releases).
-- Unzip so that `main.js`, `manifest.json`, and (optionally) `styles.css` sit in  
-  `.obsidian/plugins/folder-note-creator/`.
+- Unzip so that `main.js`, `manifest.json`, and `styles.css` sit in  
+  `.obsidian/plugins/drop-in-note/`.
 - Restart Obsidian and enable the plugin in **Settings → Community plugins**.
 
 ---
