@@ -65,7 +65,7 @@ To streamline this workflow, make sure your Obsidian settings for attachments ar
 
 | Version   | Date       | Notes                                                       |
 | --------- | ---------- | ----------------------------------------------------------- |
-| **1.1.0** | 2025-04-24 | First public release – folder-exists guard, settings panel. |
+| **1.0.0** | 2025-04-24 | First public release – folder-exists guard, settings panel. |
 
 ---
 
