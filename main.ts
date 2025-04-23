@@ -8,7 +8,7 @@
  *     exactly at the cursor and leaves the caret just after the link.
  *
  * @author  iyioon
- * @version 1.0.0 (24 Apr 2025)
+ * @version 1.0.1 (24 Apr 2025)
  */
 
 import {
@@ -84,35 +84,36 @@ export default class DropInNotePlugin extends Plugin {
       return;
     }
 
-    const baseDir = activeFile.parent?.path ?? "";
+    const baseDir    = activeFile.parent?.path ?? "";
     const folderPath = baseDir ? `${baseDir}/${name}` : name;
-    const notePath = `${folderPath}/${name}.md`;
+    const notePath   = `${folderPath}/${name}.md`;
 
     try {
       if (vault.getAbstractFileByPath(folderPath)) {
-        new Notice(`Folder \"${name}\" already exists – nothing created.`);
+        new Notice(`Folder “${name}” already exists – nothing created.`);
         this.removeToken(editor, token);
         return;
       }
 
       await vault.createFolder(folderPath);
-      const noteFile = (await vault.create(
+      await vault.create(
         notePath,
         this.settings.noteTemplate.replace(/\{\{name}}/g, name)
-      )) as TFile;
+      );
 
       /* ---- 3. Build markdown link (encoded URL) ------------------------- */
-      const encoded = encodeURIComponent(name); // spaces → %20
-      const link = `[${name}](${encoded}/${encoded}.md)`;
+      const encoded = encodeURIComponent(name);
+      const link    = `[${name}](${encoded}/${encoded}.md)`;
 
       /* ---- 4. Replace token & move caret ------------------------------- */
       const doc = editor.getValue();
       const idx = doc.indexOf(token);
+
       if (idx === -1) {
         editor.replaceSelection(link);
       } else {
         const from = editor.offsetToPos(idx);
-        const to = editor.offsetToPos(idx + token.length);
+        const to   = editor.offsetToPos(idx + token.length);
         editor.replaceRange(link, from, to);
         editor.setCursor({ line: from.line, ch: from.ch + link.length });
       }
@@ -127,23 +128,28 @@ export default class DropInNotePlugin extends Plugin {
   /* Helpers                                                                 */
   /* ----------------------------------------------------------------------- */
 
-  /** Remove leftover placeholder token if command aborts. */
   private removeToken(editor: Editor, token: string) {
     const doc = editor.getValue();
     const idx = doc.indexOf(token);
     if (idx !== -1) {
       const from = editor.offsetToPos(idx);
-      const to = editor.offsetToPos(idx + token.length);
+      const to   = editor.offsetToPos(idx + token.length);
       editor.replaceRange("", from, to);
     }
   }
 
   private promptForName(): Promise<string | undefined> {
-    return new Promise((resolve) => new NamePromptModal(this.app, resolve).open());
+    return new Promise((resolve) =>
+      new NamePromptModal(this.app, resolve).open()
+    );
   }
 
   private async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign(
+      {},
+      DEFAULT_SETTINGS,
+      await this.loadData()
+    );
   }
 
   public async saveSettings(): Promise<void> {
@@ -169,9 +175,17 @@ class NamePromptModal extends Modal {
       cls: "din-input",
     });
     this.inputEl.focus();
+
     this.inputEl.addEventListener("keydown", (ev: KeyboardEvent) => {
-      if (ev.key === "Enter") this.submit();
-      else if (ev.key === "Escape") this.close();
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.submit();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this.close();
+      }
     });
   }
 
