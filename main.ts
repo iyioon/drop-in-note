@@ -8,19 +8,20 @@
  *     exactly at the cursor and leaves the caret just after the link.
  *
  * @author  iyioon
- * @version 1.0.1 (24 Apr 2025)
+ * @version 1.0.0 (24 Apr 2025)
  */
 
 import {
-  App,
-  MarkdownView,
-  Modal,
-  Notice,
-  Plugin,
-  PluginSettingTab,
-  Setting,
-  TFile,
-  Editor,
+	App,
+	Editor,
+	MarkdownView,
+	Modal,
+	Notice,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+	TFile,
+	normalizePath,
 } from "obsidian";
 
 /* ------------------------------------------------------------------------- */
@@ -28,133 +29,139 @@ import {
 /* ------------------------------------------------------------------------- */
 
 export interface DropInNoteSettings {
-  /** Template text for new notes (`{{name}}` placeholder supported). */
-  noteTemplate: string;
+	/** Template text for new notes (`{{name}}` placeholder supported). */
+	noteTemplate: string;
 }
 
 const DEFAULT_SETTINGS: DropInNoteSettings = {
-  noteTemplate: "# {{name}}\n",
+	noteTemplate: "# {{name}}\n",
 };
 
 /* ------------------------------------------------------------------------- */
 
 export default class DropInNotePlugin extends Plugin {
-  public settings!: DropInNoteSettings;
+	public settings!: DropInNoteSettings;
 
-  async onload(): Promise<void> {
-    await this.loadSettings();
+	async onload(): Promise<void> {
+		await this.loadSettings();
 
-    this.addCommand({
-      id: "dropin-create-folder-note-link",
-      name: "Drop-in note: create & link",
-      callback: () => void this.createFolderNote(),
-    });
+		this.addCommand({
+			id: "create-folder-note-link",
+			name: "Create & link",
+			editorCheckCallback: (checking, editor, view) => {
+				if (view.file) {
+					if (!checking) {
+						this.createFolderNote(editor, view.file);
+					}
+					return true;
+				}
+				return false;
+			},
+		});
 
-    this.addSettingTab(new DropInNoteSettingTab(this.app, this));
-  }
+		this.addSettingTab(new DropInNoteSettingTab(this.app, this));
+	}
 
-  /* ----------------------------------------------------------------------- */
-  /* Core command                                                            */
-  /* ----------------------------------------------------------------------- */
+	/* ----------------------------------------------------------------------- */
+	/* Core command                                                            */
+	/* ----------------------------------------------------------------------- */
 
-  private async createFolderNote(): Promise<void> {
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    const editor = view?.editor;
-    if (!editor) {
-      new Notice("No active editor – open a note first.");
-      return;
-    }
+	private async createFolderNote(editor: Editor, file: TFile): Promise<void> {
+		/* ---- 1. Save caret via placeholder token (bullet-proof) ------------- */
+		const token = `%%dropin_${Date.now()}%%`;
+		editor.replaceSelection(token);
 
-    /* ---- 1. Save caret via placeholder token (bullet-proof) ------------- */
-    const token = `%%dropin_${Date.now()}%%`;
-    editor.replaceSelection(token);
+		const rawName = await this.promptForName();
+		if (!rawName) {
+			this.removeToken(editor, token);
+			return;
+		}
 
-    const name = await this.promptForName();
-    if (!name) {
-      this.removeToken(editor, token);
-      return;
-    }
+		const name = normalizePath(rawName);
 
-    /* ---- 2. File system operations ------------------------------------- */
-    const { vault } = this.app;
-    const activeFile = this.app.workspace.getActiveFile();
-    if (!activeFile) {
-      new Notice("No active file – open a note first.");
-      this.removeToken(editor, token);
-      return;
-    }
+		/* ---- 2. File system operations ------------------------------------- */
+		const { vault } = this.app;
+		const baseDir = file.parent?.path ?? "";
+		const folderPath = normalizePath(baseDir ? `${baseDir}/${name}` : name);
+		const notePath = normalizePath(`${folderPath}/${name}.md`);
 
-    const baseDir    = activeFile.parent?.path ?? "";
-    const folderPath = baseDir ? `${baseDir}/${name}` : name;
-    const notePath   = `${folderPath}/${name}.md`;
+		try {
+			if (vault.getAbstractFileByPath(folderPath)) {
+				new Notice(
+					`Folder "${name}" already exists – nothing created.`
+				);
+				this.removeToken(editor, token);
+				return;
+			}
 
-    try {
-      if (vault.getAbstractFileByPath(folderPath)) {
-        new Notice(`Folder “${name}” already exists – nothing created.`);
-        this.removeToken(editor, token);
-        return;
-      }
+			await vault.createFolder(folderPath);
+			await vault.create(
+				notePath,
+				this.settings.noteTemplate.replace(/\{\{name}}/g, name)
+			);
 
-      await vault.createFolder(folderPath);
-      await vault.create(
-        notePath,
-        this.settings.noteTemplate.replace(/\{\{name}}/g, name)
-      );
+			/* ---- 3. Generate markdown link using FileManager ------------------ */
+			const noteFile = vault.getAbstractFileByPath(notePath) as TFile;
+			const link = this.app.fileManager.generateMarkdownLink(
+				noteFile,
+				file.path
+			);
 
-      /* ---- 3. Build markdown link (encoded URL) ------------------------- */
-      const encoded = encodeURIComponent(name);
-      const link    = `[${name}](${encoded}/${encoded}.md)`;
+			/* ---- 4. Replace token & move caret ------------------------------- */
+			const doc = editor.getValue();
+			const idx = doc.indexOf(token);
 
-      /* ---- 4. Replace token & move caret ------------------------------- */
-      const doc = editor.getValue();
-      const idx = doc.indexOf(token);
+			if (idx === -1) {
+				editor.replaceSelection(link);
+			} else {
+				const from = editor.offsetToPos(idx);
+				const to = editor.offsetToPos(idx + token.length);
+				editor.replaceRange(link, from, to);
+				editor.setCursor({
+					line: from.line,
+					ch: from.ch + link.length,
+				});
+			}
+		} catch (err) {
+			console.error("Drop-in Note plugin error:", err);
+			new Notice(
+				"Unable to create folder/note – see console for details."
+			);
+			this.removeToken(editor, token);
+		}
+	}
 
-      if (idx === -1) {
-        editor.replaceSelection(link);
-      } else {
-        const from = editor.offsetToPos(idx);
-        const to   = editor.offsetToPos(idx + token.length);
-        editor.replaceRange(link, from, to);
-        editor.setCursor({ line: from.line, ch: from.ch + link.length });
-      }
-    } catch (err) {
-      console.error("Drop-in Note plugin error:", err);
-      new Notice("Unable to create folder/note – see console for details.");
-      this.removeToken(editor, token);
-    }
-  }
+	/* ----------------------------------------------------------------------- */
+	/* Helpers                                                                 */
+	/* ----------------------------------------------------------------------- */
 
-  /* ----------------------------------------------------------------------- */
-  /* Helpers                                                                 */
-  /* ----------------------------------------------------------------------- */
+	private removeToken(editor: Editor, token: string) {
+		const doc = editor.getValue();
+		const idx = doc.indexOf(token);
+		if (idx !== -1) {
+			const from = editor.offsetToPos(idx);
+			const to = editor.offsetToPos(idx + token.length);
+			editor.replaceRange("", from, to);
+		}
+	}
 
-  private removeToken(editor: Editor, token: string) {
-    const doc = editor.getValue();
-    const idx = doc.indexOf(token);
-    if (idx !== -1) {
-      const from = editor.offsetToPos(idx);
-      const to   = editor.offsetToPos(idx + token.length);
-      editor.replaceRange("", from, to);
-    }
-  }
+	private promptForName(): Promise<string | undefined> {
+		return new Promise((resolve) =>
+			new NamePromptModal(this.app, resolve).open()
+		);
+	}
 
-  private promptForName(): Promise<string | undefined> {
-    return new Promise((resolve) =>
-      new NamePromptModal(this.app, resolve).open()
-    );
-  }
+	private async loadSettings(): Promise<void> {
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			await this.loadData()
+		);
+	}
 
-  private async loadSettings(): Promise<void> {
-    this.settings = Object.assign(
-      {},
-      DEFAULT_SETTINGS,
-      await this.loadData()
-    );
-  }
-
-  public async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
-  }
+	public async saveSettings(): Promise<void> {
+		await this.saveData(this.settings);
+	}
 }
 
 /* ------------------------------------------------------------------------- */
@@ -162,42 +169,42 @@ export default class DropInNotePlugin extends Plugin {
 /* ------------------------------------------------------------------------- */
 
 class NamePromptModal extends Modal {
-  private inputEl!: HTMLInputElement;
-  constructor(app: App, private onSubmit: (value?: string) => void) {
-    super(app);
-  }
+	private inputEl!: HTMLInputElement;
+	constructor(app: App, private onSubmit: (value?: string) => void) {
+		super(app);
+	}
 
-  onOpen(): void {
-    this.titleEl.setText("Folder / note name");
-    this.inputEl = this.contentEl.createEl("input", {
-      type: "text",
-      placeholder: "e.g. Project X",
-      cls: "din-input",
-    });
-    this.inputEl.focus();
+	onOpen(): void {
+		this.titleEl.setText("Folder / note name");
+		this.inputEl = this.contentEl.createEl("input", {
+			type: "text",
+			placeholder: "e.g. Project X",
+			cls: "din-input",
+		});
+		this.inputEl.focus();
 
-    this.inputEl.addEventListener("keydown", (ev: KeyboardEvent) => {
-      if (ev.key === "Enter") {
-        ev.preventDefault();
-        ev.stopPropagation();
-        this.submit();
-      } else if (ev.key === "Escape") {
-        ev.preventDefault();
-        ev.stopPropagation();
-        this.close();
-      }
-    });
-  }
+		this.inputEl.addEventListener("keydown", (ev: KeyboardEvent) => {
+			if (ev.key === "Enter") {
+				ev.preventDefault();
+				ev.stopPropagation();
+				this.submit();
+			} else if (ev.key === "Escape") {
+				ev.preventDefault();
+				ev.stopPropagation();
+				this.close();
+			}
+		});
+	}
 
-  private submit(): void {
-    const value = this.inputEl.value.trim();
-    this.onSubmit(value || undefined);
-    this.close();
-  }
+	private submit(): void {
+		const value = this.inputEl.value.trim();
+		this.onSubmit(value || undefined);
+		this.close();
+	}
 
-  onClose(): void {
-    this.contentEl.empty();
-  }
+	onClose(): void {
+		this.contentEl.empty();
+	}
 }
 
 /* ------------------------------------------------------------------------- */
@@ -205,25 +212,27 @@ class NamePromptModal extends Modal {
 /* ------------------------------------------------------------------------- */
 
 class DropInNoteSettingTab extends PluginSettingTab {
-  constructor(app: App, private plugin: DropInNotePlugin) {
-    super(app, plugin);
-  }
+	constructor(app: App, private plugin: DropInNotePlugin) {
+		super(app, plugin);
+	}
 
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
+	display(): void {
+		const { containerEl } = this;
+		containerEl.empty();
 
-    new Setting(containerEl)
-      .setName("New note template")
-      .setDesc("Text written to every new note. Use {{name}} for the title.")
-      .addTextArea((ta) =>
-        ta
-          .setPlaceholder("# {{name}}")
-          .setValue(this.plugin.settings.noteTemplate)
-          .onChange(async (val) => {
-            this.plugin.settings.noteTemplate = val;
-            await this.plugin.saveSettings();
-          })
-      );
-  }
+		new Setting(containerEl)
+			.setName("New note template")
+			.setDesc(
+				"Text written to every new note. Use {{name}} for the title."
+			)
+			.addTextArea((ta) =>
+				ta
+					.setPlaceholder("# {{name}}")
+					.setValue(this.plugin.settings.noteTemplate)
+					.onChange(async (val) => {
+						this.plugin.settings.noteTemplate = val;
+						await this.plugin.saveSettings();
+					})
+			);
+	}
 }
